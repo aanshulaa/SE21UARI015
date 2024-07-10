@@ -1,86 +1,59 @@
+// index.js
 const express = require('express');
 const axios = require('axios');
+require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
-const TEST_SERVER_BASE_URL = "http://20.244.56.144/test/companies";
+const PORT = process.env.PORT || 9888;  // Default port or from .env file
 
-// Helper function to fetch products from the test server
-async function fetchProducts(company, category, params) {
+// Middleware to parse JSON bodies
+app.use(express.json());
+
+// Constants
+const WINDOW_SIZE = 10;
+let numberWindow = [];
+
+// Function to fetch numbers from test server
+async function fetchNumbers(qualifier) {
+    const url = `http://20.244.56.144/test/${qualifier}`;
     try {
-        const response = await axios.get(`${TEST_SERVER_BASE_URL}/${company}/categories/${category}/products`, { params });
-        return response.data;
+        const response = await axios.get(url, { timeout: 500 });  // Timeout set to 500ms
+        return response.data.numbers || [];
     } catch (error) {
-        console.error(`Error fetching products from ${company}:`, error.message);
+        console.error(`Error fetching ${qualifier} numbers:`, error.message);
         return [];
     }
 }
 
-// Endpoint to get top products
-app.get('/categories/:categoryname/products', async (req, res) => {
-    const { categoryname } = req.params;
-    const n = parseInt(req.query.n, 10) || 10;
-    const page = parseInt(req.query.page, 10) || 1;
-    const minPrice = req.query.minPrice;
-    const maxPrice = req.query.maxPrice;
-    const sortBy = req.query.sortBy;
-    const sortOrder = req.query.sortOrder || 'asc';
+// API endpoint
+app.get('/numbers/:qualifier', async (req, res) => {
+    const { qualifier } = req.params;
 
-    const companies = ["AMZ", "FLP", "SNP", "MYN", "AZO"];
-    let products = [];
+    // Fetch numbers from test server
+    const fetchedNumbers = await fetchNumbers(qualifier);
 
-    for (const company of companies) {
-        const params = {
-            top: n,
-            minPrice,
-            maxPrice
-        };
-        const companyProducts = await fetchProducts(company, categoryname, params);
-        products = products.concat(companyProducts);
-    }
+    // Filter out duplicates and ensure uniqueness
+    const uniqueNumbers = fetchedNumbers.filter((num, index, self) => self.indexOf(num) === index);
 
-    // Log the combined products for debugging
-    console.log("Combined Products:", products);
+    // Update numberWindow with unique numbers
+    numberWindow = [...numberWindow, ...uniqueNumbers].slice(-WINDOW_SIZE);
 
-    // Sort products
-    if (sortBy) {
-        products.sort((a, b) => {
-            const valueA = a[sortBy];
-            const valueB = b[sortBy];
-            if (valueA < valueB) return sortOrder === 'asc' ? -1 : 1;
-            if (valueA > valueB) return sortOrder === 'asc' ? 1 : -1;
-            return 0;
-        });
-    }
+    // Calculate average of current window numbers
+    const avg = numberWindow.length > 0 ? (numberWindow.reduce((acc, num) => acc + num, 0) / numberWindow.length).toFixed(2) : 0;
 
-    // Paginate products
-    const start = (page - 1) * n;
-    const end = start + n;
-    const paginatedProducts = products.slice(start, end);
+    // Prepare response object
+    const response = {
+        numbers: uniqueNumbers,
+        windowPrevState: [...numberWindow],  // Copy of previous window state
+        windowCurrState: [...numberWindow],  // Current window state
+        avg: Number(avg)
+    };
 
-    // Add unique IDs
-    paginatedProducts.forEach((product, index) => {
-        product.id = `${categoryname}-${index}`;
-    });
-
-    res.json(paginatedProducts);
+    // Send response
+    res.json(response);
 });
 
-// Endpoint to get product details
-app.get('/categories/:categoryname/products/:productid', async (req, res) => {
-    const { categoryname, productid } = req.params;
-    const companyName = productid.split('-')[0]; // Assume product ID format includes company name
-
-    try {
-        const response = await axios.get(`${TEST_SERVER_BASE_URL}/${companyName}/categories/${categoryname}/products/${productid}`);
-        res.json(response.data);
-    } catch (error) {
-        console.error(`Error fetching product details:`, error.message);
-        res.status(404).json({ error: "Product not found" });
-    }
-});
-
-// Start the server
+// Start server
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
